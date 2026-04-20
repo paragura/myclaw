@@ -141,11 +141,24 @@ pub struct SkillItem {
 pub async fn api_skills(
     State(state): State<AppState>,
 ) -> Json<Vec<SkillItem>> {
-    let skills = state.skills_mgr.list();
-    Json(skills.iter().map(|s| SkillItem {
-        name: s.name.clone(),
-        description: s.description.clone(),
-    }).collect())
+    let mut items: Vec<SkillItem> = state.skills_mgr.list()
+        .iter()
+        .map(|s| SkillItem {
+            name: s.name.clone(),
+            description: s.description.clone(),
+        })
+        .collect();
+
+    // Add markdown skills
+    let md_skills = crate::skills::manager::SkillsManager::load_markdown_skills();
+    for s in md_skills {
+        items.push(SkillItem {
+            name: s.name.replace('-', "_"),
+            description: s.description,
+        });
+    }
+
+    Json(items)
 }
 
 pub async fn api_execute_skill(

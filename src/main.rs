@@ -6,6 +6,7 @@ mod discord;
 mod memory;
 mod skills;
 mod tasks;
+mod tools;
 mod util;
 mod web;
 

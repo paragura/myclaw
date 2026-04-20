@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, error};
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::fs;
 
 use crate::ai::client::{AIClient, ChatMessage};
 use crate::ai::stream::{StreamClient, StreamItem};
@@ -9,6 +10,9 @@ use crate::memory::store::MemoryStore;
 use super::file_ops::FileOpSkill;
 use super::search::SearchSkill;
 use super::system_info::SystemInfoSkill;
+use crate::tools::shell_exec::ShellExecTool;
+use crate::tools::file_write::FileWriteTool;
+use crate::tools::web_fetch::WebFetchTool;
 
 /// Represents a skill that can be invoked
 #[derive(Clone)]
@@ -117,6 +121,46 @@ impl SkillsManager {
             },
         ));
 
+        // Shell exec tool
+        let shell_tool = ShellExecTool::new();
+        self.register(Skill {
+            name: "shell_exec".to_string(),
+            description: "Execute a shell command. Args: <command> (e.g. 'ls -la', 'curl -s https://...')".to_string(),
+            func: Arc::new(move |args: &str, _store: Arc<MemoryStore>| {
+                let tool = shell_tool.clone();
+                let args = args.to_string();
+                Box::pin(async move { tool.execute(&args) })
+            }),
+        });
+
+        // File write tool
+        let fw_tool = FileWriteTool::new();
+        self.register(Skill {
+            name: "file_write".to_string(),
+            description: "Write content to a file. Args: <filepath> <content>".to_string(),
+            func: Arc::new(move |args: &str, _store: Arc<MemoryStore>| {
+                let tool = fw_tool.clone();
+                let args = args.to_string();
+                Box::pin(async move { tool.write(&args) })
+            }),
+        });
+
+        // Web fetch tool
+        let wf_tool = WebFetchTool::new();
+        self.register(Skill {
+            name: "web_fetch".to_string(),
+            description: "Fetch a web page and return title + content. Args: <url>".to_string(),
+            func: Arc::new(move |args: &str, _store: Arc<MemoryStore>| {
+                let tool = wf_tool.clone();
+                let url = args.to_string();
+                Box::pin(async move {
+                    tokio::spawn(async move { tool.fetch(&url).await })
+                        .await
+                        .unwrap_or_else(|e| format!("Web fetch error: {}", e))
+                })
+            }),
+        });
+
         info!("[SkillsManager] Registered {} built-in skills", self.skills.len());
     }
 
@@ -141,11 +185,79 @@ impl SkillsManager {
     }
 
     pub fn list_descriptions(&self) -> String {
-        self.skills
-            .values()
-            .map(|s| format!("  `!skill {}` - {}", s.name, s.description))
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut lines: Vec<String> = Vec::new();
+
+        // Rust tools
+        lines.push("  **Rust Tools:**".to_string());
+        for s in self.skills.values() {
+            lines.push(format!("  `!skill {}` - {}", s.name, s.description));
+        }
+
+        // Markdown skills
+        let md_skills = SkillsManager::load_markdown_skills();
+        if !md_skills.is_empty() {
+            lines.push("".to_string());
+            lines.push("  **Markdown Skills:**".to_string());
+            for s in &md_skills {
+                lines.push(format!("  `SKILL.md` {} - {}", s.name, s.description));
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    /// Load markdown skills from src/skills/markdown/*/SKILL.md
+    pub fn load_markdown_skills() -> Vec<MarkdownSkill> {
+        let mut skills = Vec::new();
+        let base = "src/skills/markdown";
+
+        if let Ok(entries) = fs::read_dir(base) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let skill_path = entry.path().join("SKILL.md");
+                if skill_path.is_file() {
+                    if let Ok(content) = fs::read_to_string(&skill_path) {
+                        if let Some(skill) = MarkdownSkill::from_markdown(&content) {
+                            skills.push(skill);
+                        }
+                    }
+                }
+            }
+        }
+
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+        skills
+    }
+}
+
+/// A skill defined as a markdown file (SKILL.md format).
+#[derive(Debug, Clone)]
+pub struct MarkdownSkill {
+    pub name: String,
+    pub description: String,
+}
+
+impl MarkdownSkill {
+    /// Parse frontmatter from a SKILL.md file.
+    fn from_markdown(content: &str) -> Option<Self> {
+        let content = content.trim();
+        if !content.starts_with("---") {
+            return None;
+        }
+
+        let end = content[3..].find("-->")?;
+        let frontmatter = &content[3..3 + end];
+
+        let name = frontmatter
+            .lines()
+            .find(|l| l.starts_with("name:"))
+            .and_then(|l| l.split(':').nth(1).map(|s| s.trim().to_string()))?;
+
+        let description = frontmatter
+            .lines()
+            .find(|l| l.starts_with("description:"))
+            .and_then(|l| l.split(':').nth(1).map(|s| s.trim().to_string()))?;
+
+        Some(Self { name, description })
     }
 }
 
