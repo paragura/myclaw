@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myclaw Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>myclaw</h1>
+            <p class="subtitle">Personal AI Assistant Dashboard</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab active" data-tab="status">Status</button>
+            <button class="tab" data-tab="memories">Memories</button>
+            <button class="tab" data-tab="agents">Agents</button>
+            <button class="tab" data-tab="skills">Skills</button>
+            <button class="tab" data-tab="channels">Channels</button>
+            <button class="tab" data-tab="tasks">Tasks</button>
+        </nav>
+
+        <main>
+            <section id="status" class="tab-content active">
+                <div class="card">
+                    <h2>Bot Status</h2>
+                    <div id="status-details" class="status-grid"></div>
+                </div>
+            </section>
+
+            <section id="memories" class="tab-content">
+                <div class="card">
+                    <h2>Memories <span id="memory-count"></span></h2>
+                    <input type="text" id="memory-search" placeholder="Search memories...">
+                    <div id="memories-list" class="list"></div>
+                </div>
+            </section>
+
+            <section id="agents" class="tab-content">
+                <div class="card">
+                    <h2>Agents <span id="agent-count"></span></h2>
+                    <div id="agents-list" class="list"></div>
+                </div>
+            </section>
+
+            <section id="skills" class="tab-content">
+                <div class="card">
+                    <h2>Skills</h2>
+                    <div id="skills-list" class="list"></div>
+                </div>
+            </section>
+
+            <section id="channels" class="tab-content">
+                <div class="card">
+                    <h2>Always Respond Channels</h2>
+                    <p class="hint">Channels in this list will trigger the bot without @mention or !prefix.</p>
+                    <div class="channel-input-row">
+                        <input type="text" id="channel-add-input" placeholder="チャンネルIDを入力...">
+                        <button class="btn btn-primary btn-sm" onclick="addChannel()">Add</button>
+                    </div>
+                    <div id="channels-list" class="list"></div>
+                </div>
+            </section>
+
+            <section id="tasks" class="tab-content">
+                <div class="card">
+                    <h2>Scheduled Tasks</h2>
+                    <div id="tasks-list" class="list"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
