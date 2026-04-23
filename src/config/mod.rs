@@ -14,14 +14,18 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct BotConfig {
+    #[serde(default)]
     pub token: String,
     pub prefix: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct AIConfig {
+    #[serde(default)]
     pub api_url: String,
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub api_key: String,
     pub max_tokens: usize,
     pub temperature: f32,

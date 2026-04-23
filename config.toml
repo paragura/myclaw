@@ -3,15 +3,9 @@
 # .env variables override these defaults automatically.
 
 [bot]
-# Token is set via DISCORD_BOT_TOKEN env var
-token = ""
 prefix = "!"
 
 [ai]
-# Override with AI_API_URL, AI_MODEL, AI_API_KEY env vars
-api_url = ""
-model = ""
-api_key = ""
 max_tokens = 2048
 temperature = 0.7
 
