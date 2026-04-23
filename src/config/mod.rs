@@ -78,7 +78,6 @@ impl Config {
         config.ai.api_url = env_or(&config.ai.api_url, "AI_API_URL");
         config.ai.model = env_or(&config.ai.model, "AI_MODEL");
         config.ai.api_key = env_or(&config.ai.api_key, "AI_API_KEY");
-        config.db.path = env_or(&config.db.path, "DB_PATH");
 
         Ok(config)
     }

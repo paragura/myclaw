@@ -1,38 +1,25 @@
 # myclaw - Personal AI Assistant Config
+# Secrets (token, api_url, model, api_key) should be set via .env
+# .env variables override these defaults automatically.
 
 [bot]
-# Discord Bot Token
-token = "YOUR_DISCORD_BOT_TOKEN_HERE"
-# Command prefix
+# Command prefix (not secret, stays here)
 prefix = "!"
 
 [ai]
-# Qwen API URL (OpenAI-compatible endpoint)
-api_url = "http://paragura-dgx-spark.tail802c9c.ts.net:8888/v1/chat/completions"
-# Model name
-model = "Qwen/Qwen3.6-35B-A3B-FP8"
-# API Key (dummy - not required)
-api_key = "dummy"
-# Max tokens per response
+# Defaults — override with AI_API_URL, AI_MODEL, AI_API_KEY env vars
 max_tokens = 2048
-# Temperature (0.0 - 1.0, higher = more creative)
 temperature = 0.7
 
 [db]
-# SQLite database path
 path = "/Users/paragura/ghq/github.com/paragura/myclaw/myclaw.db"
 
 [tasks]
-# Heartbeat cron (every 5 minutes)
 heartbeat = "*/5 * * * *"
-# Memory cleanup (daily at midnight)
 memory_cleanup = "0 0 * * *"
 
 [channels]
-# Channel IDs that respond to all messages (no mention/prefix needed)
-# Leave empty to disable — bot only responds to @mentions
 always_respond_channels = []
 
 [web]
-# Web dashboard listen address
 listen = "127.0.0.1:3000"
