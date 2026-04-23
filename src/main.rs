@@ -29,6 +29,9 @@ use std::env;
 
 #[tokio::main]
 async fn main() {
+    // Load .env file for secrets
+    let _ = dotenv::dotenv();
+
     // Initialize logging
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("info,serenity=warn,sqlx=warn")

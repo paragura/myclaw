@@ -29,6 +29,8 @@ impl ContextManager {
         let mut messages = vec![ChatMessage {
             role: "system".to_string(),
             content: self.system_prompt.clone(),
+            tool_calls: None,
+            tool_call_id: None,
         }];
 
         // Get relevant memories
@@ -41,6 +43,8 @@ impl ContextManager {
             messages.push(ChatMessage {
                 role: "system".to_string(),
                 content: format!("Known memories:\n{}", memory_content.join("\n")),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 
@@ -50,6 +54,8 @@ impl ContextManager {
             messages.push(ChatMessage {
                 role: entry.role.clone(),
                 content: entry.content.clone(),
+                tool_calls: None,
+                tool_call_id: None,
             });
         }
 

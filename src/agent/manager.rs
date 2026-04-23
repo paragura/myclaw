@@ -125,10 +125,14 @@ impl AgentManager {
                         {}",
                         agent_name, memory_context
                     ),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
                 ChatMessage {
                     role: "user".to_string(),
                     content: prompt.to_string(),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             ];
 
@@ -207,6 +211,9 @@ impl AgentManager {
                 }
                 StreamItem::Content(part) => {
                     content_parts.push(part);
+                }
+                StreamItem::ToolCall { .. } => {
+                    // Tool calls handled by the main tool-use loop
                 }
                 StreamItem::Error(e) => {
                     error!("[Agent {}] Stream error: {}", agent_id, e);

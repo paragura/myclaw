@@ -235,10 +235,14 @@ pub async fn handle_command(
                     ChatMessage {
                         role: "system".to_string(),
                         content: system_prompt.to_string(),
+                        tool_calls: None,
+                        tool_call_id: None,
                     },
                     ChatMessage {
                         role: "user".to_string(),
                         content: format!("以下の要件でコードを生成してください:\n\n{}", description_clone),
+                        tool_calls: None,
+                        tool_call_id: None,
                     },
                 ];
 

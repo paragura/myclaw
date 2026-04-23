@@ -1,6 +1,7 @@
 
 use serde::Deserialize;
 use std::path::Path;
+use std::env;
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -59,11 +60,26 @@ impl Default for WebConfig {
     }
 }
 
+fn env_or(cfg: &str, key: &str) -> String {
+    env::var(key).unwrap_or_else(|_| cfg.to_string())
+}
+
 impl Config {
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        // Load .env first (already done in main, but be resilient)
+        let _ = dotenv::dotenv();
+
         let path = Path::new(path);
         let toml_str = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&toml_str)?;
+        let mut config: Config = toml::from_str(&toml_str)?;
+
+        // Override with env vars (takes priority over config.toml)
+        config.bot.token = env_or(&config.bot.token, "DISCORD_BOT_TOKEN");
+        config.ai.api_url = env_or(&config.ai.api_url, "AI_API_URL");
+        config.ai.model = env_or(&config.ai.model, "AI_MODEL");
+        config.ai.api_key = env_or(&config.ai.api_key, "AI_API_KEY");
+        config.db.path = env_or(&config.db.path, "DB_PATH");
+
         Ok(config)
     }
 }

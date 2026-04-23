@@ -69,6 +69,8 @@ impl CodingExecutor {
             crate::ai::client::ChatMessage {
                 role: "system".to_string(),
                 content: self.system_prompt.clone(),
+                tool_calls: None,
+                tool_call_id: None,
             },
             crate::ai::client::ChatMessage {
                 role: "user".to_string(),
@@ -76,6 +78,8 @@ impl CodingExecutor {
                     "言語: {}\n\n要件:\n{}",
                     language, description
                 ),
+                tool_calls: None,
+                tool_call_id: None,
             },
         ];
 

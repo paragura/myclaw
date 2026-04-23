@@ -4,13 +4,14 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::fs;
 
-use crate::ai::client::{AIClient, ChatMessage};
+use crate::ai::client::{AIClient, ChatMessage, ToolDefinition};
 use crate::ai::stream::{StreamClient, StreamItem};
 use crate::memory::store::MemoryStore;
 use super::file_ops::FileOpSkill;
 use super::search::SearchSkill;
 use super::system_info::SystemInfoSkill;
 use crate::tools::shell_exec::ShellExecTool;
+use crate::tools::file_read::FileReadTool;
 use crate::tools::file_write::FileWriteTool;
 use crate::tools::web_fetch::WebFetchTool;
 
@@ -63,15 +64,15 @@ impl SkillsManager {
     }
 
     fn register_builtins(&mut self) {
-        // File operations skill
-        let file_skill_read = FileOpSkill::new();
+        // File read tool
+        let file_skill_read = FileReadTool::new();
         self.register(Skill {
             name: "file_read".to_string(),
             description: "Read file contents. Args: <filepath>".to_string(),
-            func: Arc::new(move |args: &str, store: Arc<MemoryStore>| {
-                let skill = file_skill_read.clone();
+            func: Arc::new(move |args: &str, _store: Arc<MemoryStore>| {
+                let tool = file_skill_read.clone();
                 let args = args.to_string();
-                Box::pin(async move { skill.read_file(&args, &store).await })
+                Box::pin(async move { tool.read(&args) })
             }),
         });
 
@@ -206,6 +207,29 @@ impl SkillsManager {
         lines.join("\n")
     }
 
+    /// Convert skills to OpenAI-compatible tool definitions.
+    pub fn to_tool_definitions(&self) -> Vec<ToolDefinition> {
+        self.skills.values().map(|skill| {
+            ToolDefinition {
+                r#type: "function".to_string(),
+                function: crate::ai::client::FunctionDefinition {
+                    name: skill.name.clone(),
+                    description: skill.description.clone(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "command": {
+                                "type": "string",
+                                "description": "The arguments for the skill"
+                            }
+                        },
+                        "required": ["command"]
+                    }),
+                },
+            }
+        }).collect()
+    }
+
     /// Load markdown skills from src/skills/markdown/*/SKILL.md
     pub fn load_markdown_skills() -> Vec<MarkdownSkill> {
         let mut skills = Vec::new();
@@ -314,6 +338,9 @@ pub async fn execute_with_thinking(
             StreamItem::Content(part) => {
                 content_parts.push(part);
             }
+            StreamItem::ToolCall { .. } => {
+                // Tool calls are handled by the tool-use loop in handle_free_chat_thinking
+            }
             StreamItem::Error(e) => {
                 error!("[Thinking] Stream error: {}", e);
                 thinking_sender(&format!("❌ エラー: {}", e));
@@ -353,10 +380,14 @@ async fn decide_skill_usage(
                 日本語で考えてください。",
                 skill_list
             ),
+            tool_calls: None,
+            tool_call_id: None,
         },
         ChatMessage {
             role: "user".to_string(),
             content: messages.last().map(|m| m.content.clone()).unwrap_or_default(),
+            tool_calls: None,
+            tool_call_id: None,
         },
     ];
 

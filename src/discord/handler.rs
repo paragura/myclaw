@@ -4,8 +4,8 @@ use tracing::{info, error};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::ai::client::AIClient;
-use crate::ai::stream::StreamClient;
+use crate::ai::client::{AIClient, ChatMessage};
+use crate::ai::stream::{StreamClient, StreamItem};
 use crate::ai::context::ContextManager;
 use crate::memory::store::MemoryStore;
 use crate::coding::executor::CodingExecutor;
@@ -345,7 +345,7 @@ impl BotHandler {
     }
 }
 
-// --- Free chat with thinking display ---
+// --- Free chat with thinking display + tool use ---
 
 async fn handle_free_chat_thinking(
     ctx: &Context,
@@ -353,8 +353,8 @@ async fn handle_free_chat_thinking(
     _ai_client: &Arc<AIClient>,
     stream_client: &Arc<StreamClient>,
     context_mgr: &Arc<ContextManager>,
-    _skills_mgr: &SkillsManager,
-    _store: &Arc<MemoryStore>,
+    skills_mgr: &SkillsManager,
+    store: &Arc<MemoryStore>,
     pending: &Arc<tokio::sync::Mutex<Vec<String>>>,
 ) {
     let query = msg.content.trim().to_string();
@@ -370,56 +370,135 @@ async fn handle_free_chat_thinking(
         .await;
 
     // Build messages
-    let messages = context_mgr
+    let mut messages: Vec<ChatMessage> = context_mgr
         .get_messages_for_channel(&msg.channel_id.to_string(), 10)
         .await;
 
-    // Stream response with thinking display
-    let mut content_parts = Vec::new();
-    let mut last_thinking_len = 0usize;
+    // Tool-use loop
+    let mut tool_call_results: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let tool_definitions = skills_mgr.to_tool_definitions();
+    let max_rounds = 10;
+    let mut round = 0;
 
     {
         let mut pending_lock = pending.lock().await;
         pending_lock.push(msg.channel_id.to_string());
     }
 
-    let items = stream_client.stream_chat(&messages).await;
-    use crate::ai::stream::StreamItem;
+    let mut final_answer = String::new();
+    let mut last_reasoning_len = 0usize;
 
-    for item in items {
-        match item {
-            StreamItem::Reasoning { content, done } => {
-                if !content.is_empty() && content.len() > last_thinking_len {
-                    let new_text = &content[last_thinking_len..];
-                    if !new_text.trim().is_empty() {
-                        let display = format!("🤔 {}", new_text.trim().chars().take(200).collect::<String>());
-                        let _ = msg.channel_id.say(&ctx.http, &display).await;
-                        last_thinking_len = content.len();
+    // Send thinking indicator
+    let _ = msg.channel_id.say(&ctx.http, "🧠 **思考を開始します...**").await;
+
+    loop {
+        round += 1;
+        if round > max_rounds {
+            error!("[Free Chat] Max rounds ({}) reached", max_rounds);
+            final_answer = "エラー: 最大ラウンド数を超えました".to_string();
+            break;
+        }
+
+        info!("[Free Chat] Round {} — sending {} messages", round, messages.len());
+
+        // Stream response with tools
+        let items = stream_client.stream_chat_with_tools(&messages, Some(tool_definitions.clone())).await;
+
+        // Collect tool calls
+        let mut pending_tool_calls: Vec<(String, String, String)> = Vec::new(); // (id, name, args)
+
+        for item in &items {
+            match item {
+                StreamItem::Reasoning { content, done } => {
+                    if !content.is_empty() && content.len() > last_reasoning_len {
+                        let new_text = &content[last_reasoning_len..];
+                        if !new_text.trim().is_empty() {
+                            let display = format!("🤔 {}", new_text.trim().chars().take(200).collect::<String>());
+                            let _ = msg.channel_id.say(&ctx.http, &display).await;
+                            last_reasoning_len = content.len();
+                        }
+                    }
+                    if *done && !content.is_empty() {
+                        let _ = msg.channel_id.say(&ctx.http, "💭 思考完了").await;
                     }
                 }
-                if done && !content.is_empty() {
-                    let _ = msg.channel_id.say(&ctx.http, "💭 思考完了").await;
+                StreamItem::ToolCall { id, name, arguments } => {
+                    pending_tool_calls.push((id.clone(), name.clone(), arguments.clone()));
+                }
+                StreamItem::Content(part) => {
+                    final_answer = part.clone();
+                }
+                StreamItem::Error(e) => {
+                    error!("[Free Chat] Stream error: {}", e);
+                    final_answer = format!("エラー: {}", e);
                 }
             }
-            StreamItem::Content(part) => {
-                content_parts.push(part);
-            }
-            StreamItem::Error(e) => {
-                error!("[Thinking] Stream error: {}", e);
-                let _ = msg.channel_id.say(&ctx.http, &format!("エラー: {}", e)).await;
-            }
+        }
+
+        // If we got a final answer or error, break
+        if !final_answer.is_empty() && !final_answer.starts_with("エラー") {
+            break;
+        }
+        if items.iter().any(|i| matches!(i, StreamItem::Error(_))) {
+            break;
+        }
+
+        // Execute tool calls
+        if pending_tool_calls.is_empty() {
+            // No content, no tool calls — something went wrong
+            final_answer = "応答がありませんでした。".to_string();
+            break;
+        }
+
+        for (tc_id, tc_name, tc_args) in &pending_tool_calls {
+            info!("[Free Chat] Round {} — Tool Call: {} args={}", round, tc_name, tc_args);
+
+            let display = format!("🔧 **スキル `{}` を実行中...**", tc_name);
+            let _ = msg.channel_id.say(&ctx.http, &display).await;
+
+            let output = skills_mgr.invoke(&tc_name, &tc_args, store).await;
+            info!("[Free Chat] Round {} — Tool result: {} chars", round, output.len());
+
+            tool_call_results.insert(tc_id.clone(), output.clone());
+
+            let result_msg = format!("✅ **結果:**\n```{}\n```", crate::util::truncate(&output, 1500));
+            let _ = msg.channel_id.say(&ctx.http, &result_msg).await;
+        }
+
+        // Build messages with tool results for next round
+        messages.clear();
+        // Restore conversation history
+        let history: Vec<ChatMessage> = context_mgr
+            .get_messages_for_channel(&msg.channel_id.to_string(), 10)
+            .await;
+        messages.extend(history);
+
+        // Add tool results as assistant + tool messages
+        for (tc_id, tc_name, tc_args) in &pending_tool_calls {
+            let output = tool_call_results.get(tc_id).unwrap();
+            messages.push(ChatMessage {
+                role: "assistant".to_string(),
+                content: format!("Tool call: {} with args: {}", tc_name, tc_args),
+                tool_calls: None,
+                tool_call_id: None,
+            });
+            messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: output.clone(),
+                tool_calls: None,
+                tool_call_id: Some(tc_id.clone()),
+            });
         }
     }
 
-    let reply_text = content_parts.join("");
-    let final_answer = crate::util::truncate(&reply_text, 1800);
+    let reply_text = crate::util::truncate(&final_answer, 1800);
 
     // Save AI response
     context_mgr
-        .add_to_context(&msg.author.id.to_string(), &msg.channel_id.to_string(), "assistant", &final_answer)
+        .add_to_context(&msg.author.id.to_string(), &msg.channel_id.to_string(), "assistant", &reply_text)
         .await;
 
-    let _ = msg.channel_id.say(&ctx.http, &final_answer).await;
+    let _ = msg.channel_id.say(&ctx.http, &reply_text).await;
 
     {
         let mut pending_lock = pending.lock().await;
@@ -466,6 +545,7 @@ async fn handle_thinking_chat(
             StreamItem::Content(part) => {
                 content_parts.push(part);
             }
+            StreamItem::ToolCall { .. } => {}
             StreamItem::Error(e) => {
                 error!("[Think] Stream error: {}", e);
                 let _ = msg.channel_id.say(&ctx.http, &format!("エラー: {}", e)).await;
