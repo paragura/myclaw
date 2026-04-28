@@ -35,3 +35,48 @@ impl FileReadTool {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_file_read_empty_args() {
+        let tool = FileReadTool::new();
+        let result = tool.read("");
+        assert!(result.contains("ファイルパス"));
+    }
+
+    #[test]
+    fn test_file_read_nonexistent_file() {
+        let tool = FileReadTool::new();
+        let result = tool.read("/nonexistent/path/to/file.txt");
+        assert!(result.contains("読み込みに失敗"));
+    }
+
+    #[test]
+    fn test_file_read_existing_file() {
+        let dir = TempDir::new().unwrap();
+        let filepath = dir.path().join("test.txt");
+        fs::write(&filepath, "hello world").unwrap();
+
+        let tool = FileReadTool::new();
+        let result = tool.read(filepath.to_str().unwrap());
+        assert!(result.contains("hello world"));
+        assert!(result.contains("✅"));
+    }
+
+    #[test]
+    fn test_file_read_truncation() {
+        let dir = TempDir::new().unwrap();
+        let filepath = dir.path().join("large.txt");
+        let content = "a".repeat(4000);
+        fs::write(&filepath, &content).unwrap();
+
+        let tool = FileReadTool::new();
+        let result = tool.read(filepath.to_str().unwrap());
+        assert!(result.contains("..."));
+    }
+}

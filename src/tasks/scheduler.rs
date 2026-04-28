@@ -79,3 +79,69 @@ fn parse_cron_field(field: &str, min: i32, _max: i32) -> i32 {
     }
     field.parse::<i32>().unwrap_or(min)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_cron_field_wildcard() {
+        assert_eq!(parse_cron_field("*", 0, 59), 0);
+        assert_eq!(parse_cron_field("*", 1, 23), 1);
+    }
+
+    #[test]
+    fn test_parse_cron_field_integer() {
+        assert_eq!(parse_cron_field("30", 0, 59), 30);
+        assert_eq!(parse_cron_field("15", 0, 23), 15);
+        assert_eq!(parse_cron_field("0", 0, 59), 0);
+    }
+
+    #[test]
+    fn test_parse_cron_field_invalid_fallback() {
+        // Invalid field falls back to min
+        assert_eq!(parse_cron_field("abc", 0, 59), 0);
+        assert_eq!(parse_cron_field("xyz", 1, 23), 1);
+    }
+
+    #[test]
+    fn test_parse_cron_field_negative() {
+        // Negative value is valid as i32 parse result
+        assert_eq!(parse_cron_field("-1", 0, 59), -1);
+    }
+
+    #[test]
+    fn test_parse_next_run_invalid_format() {
+        // Invalid cron expression should return now + 1 hour
+        let result = TaskScheduler::parse_next_run("not a cron expr");
+        let expected = Utc::now() + chrono::Duration::hours(1);
+        let diff = (result - expected).abs();
+        assert!(diff < chrono::Duration::seconds(2));
+    }
+
+    #[test]
+    fn test_parse_next_run_wildcard_minute() {
+        let result = TaskScheduler::parse_next_run("* * * * *");
+        // Wildcard minute=0, hour=0. If result <= now, it gets pushed +1h.
+        // The key property is that result is at minute 0, hour 0 or 1
+        use chrono::Timelike;
+        assert_eq!(result.minute(), 0);
+        // Hour could be 0 or 1 depending on current time
+        assert!(result.hour() == 0 || result.hour() == 1);
+    }
+
+    #[test]
+    fn test_parse_next_run_specific_time() {
+        let result = TaskScheduler::parse_next_run("30 14 * * *");
+        let now = Utc::now();
+        // Should be in the future
+        assert!(result > now);
+    }
+
+    #[test]
+    fn test_parse_next_run_star_star() {
+        // */5 is not "*" so parse returns -1 (parse::<i32>() of "*/5" gives -1)
+        // The key property is that it doesn't panic
+        let _result = TaskScheduler::parse_next_run("*/5 * * * *");
+    }
+}

@@ -313,3 +313,173 @@ impl StreamClient {
         items
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_sse_chunk(content: &str) -> String {
+        format!("data: {}\n\n", content)
+    }
+
+    #[test]
+    fn test_parse_sse_empty_stream() {
+        let items = StreamClient::parse_sse_stream(b"");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_done() {
+        let data = b"data: [DONE]\n\n";
+        let items = StreamClient::parse_sse_stream(data);
+        // Should have a final reasoning item with done=true if there was reasoning
+        // or just be empty if there was nothing
+        let has_done = items.iter().any(|i| matches!(i, StreamItem::Reasoning { done: true, .. }));
+        assert!(has_done || items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_content_only() {
+        let sse_data = format!(
+            "{}\n{}\n{}\n",
+            sample_sse_chunk(r#"{"choices":[{"delta":{"role":"assistant","content":"Hello"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{"content":" world"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+        );
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let content_items: Vec<&String> = items.iter()
+            .filter_map(|i| match i { StreamItem::Content(s) => Some(s), _ => None })
+            .collect();
+        assert!(!content_items.is_empty());
+        let combined: String = content_items.iter().map(|s| s.as_str()).collect();
+        assert!(combined.contains("Hello"));
+        assert!(combined.contains("world"));
+    }
+
+    #[test]
+    fn test_parse_sse_reasoning_content() {
+        let sse_data = format!(
+            "{}\n{}\n{}\n",
+            sample_sse_chunk(r#"{"choices":[{"delta":{"reasoning_content":"Thinking"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{"reasoning_content":" more"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{"reasoning_content":"."},"finish_reason":"stop"}]}"#),
+        );
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let reasoning_items: Vec<&str> = items.iter()
+            .filter_map(|i| match i { StreamItem::Reasoning { content, done } if !done => Some(content.as_str()), _ => None })
+            .collect();
+        assert!(!reasoning_items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_tool_call() {
+        // Minimal SSE with tool call followed by [DONE]
+        // Tool calls are flushed on [DONE]
+        let sse_data = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"file_read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+"#;
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let has_tool = items.iter().any(|i| {
+            matches!(i, StreamItem::ToolCall { id, .. } if id == "call_1")
+        });
+        assert!(has_tool);
+    }
+
+    #[test]
+    fn test_parse_sse_tool_call_with_content() {
+        // Tool call with content and finish_reason
+        let sse_data = r#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"file_read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}
+
+data: {"choices":[{"delta":{"content":"result"},"finish_reason":"stop"}]}
+
+data: [DONE]
+"#;
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let has_tool = items.iter().any(|i| {
+            matches!(i, StreamItem::ToolCall { id, .. } if id == "call_1")
+        });
+        assert!(has_tool);
+
+        let has_content = items.iter().any(|i| {
+            matches!(i, StreamItem::Content(s) if s == "result")
+        });
+        assert!(has_content);
+    }
+
+    #[test]
+    fn test_parse_sse_choice_finish_reason_deserializes() {
+        let json = r#"{"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}"#;
+        let chunk: StreamChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices[0].finish_reason, Some("stop".to_string()));
+    }
+
+    #[test]
+    fn test_parse_sse_skips_invalid_json() {
+        let sse_data = format!(
+            "{}\n{}\n{}\n",
+            sample_sse_chunk("not valid json at all"),
+            sample_sse_chunk(r#"{"choices":[{"delta":{"content":"OK"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+        );
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let content_items: Vec<&String> = items.iter()
+            .filter_map(|i| match i { StreamItem::Content(s) => Some(s), _ => None })
+            .collect();
+        assert!(!content_items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_non_data_lines_ignored() {
+        let sse_data = format!(
+            ": comment line\n{}\n{}\n",
+            sample_sse_chunk(r#"{"choices":[{"delta":{"content":"test"}}]}"#),
+            sample_sse_chunk(r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+        );
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+
+        let content_items: Vec<&String> = items.iter()
+            .filter_map(|i| match i { StreamItem::Content(s) => Some(s), _ => None })
+            .collect();
+        assert!(!content_items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_utf8_failure() {
+        let invalid_utf8 = vec![0xFF, 0xFE, 0xFE, 0xFD];
+        let items = StreamClient::parse_sse_stream(&invalid_utf8);
+        assert!(items.iter().any(|i| matches!(i, StreamItem::Error(_))));
+    }
+
+    #[test]
+    fn test_parse_sse_empty_data_field() {
+        let sse_data = "data: \n\ndata: [DONE]\n\n";
+        let items = StreamClient::parse_sse_stream(sse_data.as_bytes());
+        // Should handle gracefully - just done
+        let has_done = items.iter().any(|i| matches!(i, StreamItem::Reasoning { done: true, .. }));
+        assert!(has_done || items.is_empty());
+    }
+
+    #[test]
+    fn test_stream_item_debug() {
+        let item = StreamItem::Content("test".to_string());
+        let debug_str = format!("{:?}", item);
+        assert!(debug_str.contains("Content"));
+
+        let item = StreamItem::Error("oops".to_string());
+        let debug_str = format!("{:?}", item);
+        assert!(debug_str.contains("Error"));
+    }
+
+    #[test]
+    fn test_stream_item_clone() {
+        let item = StreamItem::Content("test".to_string());
+        let cloned = item.clone();
+        assert!(matches!(&cloned, StreamItem::Content(s) if s == "test"));
+    }
+}

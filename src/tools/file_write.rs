@@ -54,3 +54,64 @@ impl FileWriteTool {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_file_write_empty_args() {
+        let tool = FileWriteTool::new();
+        let result = tool.write("");
+        assert!(result.contains("引数を入力"));
+    }
+
+    #[test]
+    fn test_file_write_missing_content() {
+        let tool = FileWriteTool::new();
+        let result = tool.write("just_a_path.txt");
+        assert!(result.contains("ファイルパスと内容"));
+    }
+
+    #[test]
+    fn test_file_write_new_file() {
+        let dir = TempDir::new().unwrap();
+        let filepath = dir.path().join("new_file.txt");
+
+        let tool = FileWriteTool::new();
+        let result = tool.write(&format!("{} hello world", filepath.display()));
+        assert!(result.contains("作成"));
+        assert!(result.contains("✅"));
+
+        // Verify file actually exists
+        assert!(fs::read_to_string(&filepath).unwrap() == "hello world");
+    }
+
+    #[test]
+    fn test_file_write_update_existing() {
+        let dir = TempDir::new().unwrap();
+        let filepath = dir.path().join("existing.txt");
+        fs::write(&filepath, "old content").unwrap();
+
+        let tool = FileWriteTool::new();
+        let result = tool.write(&format!("{} new content", filepath.display()));
+        assert!(result.contains("更新"));
+
+        let content = fs::read_to_string(&filepath).unwrap();
+        assert_eq!(content, "new content");
+    }
+
+    #[test]
+    fn test_file_write_creates_parent_dir() {
+        let dir = TempDir::new().unwrap();
+        let filepath = dir.path().join("nested").join("sub").join("file.txt");
+
+        let tool = FileWriteTool::new();
+        let result = tool.write(&format!("{} content", filepath.display()));
+        assert!(result.contains("✅"));
+
+        assert!(fs::read_to_string(&filepath).unwrap() == "content");
+    }
+}

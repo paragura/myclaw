@@ -121,3 +121,125 @@ fn truncate(text: &str, max: usize) -> String {
         format!("{}...", text.chars().take(max).collect::<String>())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_title_valid() {
+        let html = "<html><head><title>Test Page</title></head></html>";
+        let title = extract_title(html).unwrap();
+        assert_eq!(title, "Test Page");
+    }
+
+    #[test]
+    fn test_extract_title_with_whitespace() {
+        let html = "<html><head><title>  Spaced Title  </title></head></html>";
+        let title = extract_title(html).unwrap();
+        assert_eq!(title, "Spaced Title");
+    }
+
+    #[test]
+    fn test_extract_title_missing() {
+        let html = "<html><head></head><body>Hello</body></html>";
+        assert!(extract_title(html).is_none());
+    }
+
+    #[test]
+    fn test_extract_title_empty_html() {
+        assert!(extract_title("").is_none());
+    }
+
+    #[test]
+    fn test_extract_title_with_unicode() {
+        let html = "<html><title>日本語ページ</title></html>";
+        let title = extract_title(html).unwrap();
+        assert_eq!(title, "日本語ページ");
+    }
+
+    #[test]
+    fn test_extract_title_special_chars() {
+        let html = r#"<html><title>Title: "Quoted" & <Special></title></html>"#;
+        let title = extract_title(html).unwrap();
+        assert!(title.contains("Quoted"));
+    }
+
+    #[test]
+    fn test_extract_text_basic() {
+        let html = "<html><body><p>Hello world</p></body></html>";
+        let text = extract_text(html);
+        assert!(text.contains("Hello"));
+        assert!(text.contains("world"));
+    }
+
+    #[test]
+    fn test_extract_text_strips_tags() {
+        let html = "<div><span>test</span></div>";
+        let text = extract_text(html);
+        assert_eq!(text, "test");
+    }
+
+    #[test]
+    fn test_extract_text_handles_script() {
+        let html = "<html><body><p>content</p><script>alert('hi');</script></body></html>";
+        let text = extract_text(html);
+        assert!(text.contains("content"));
+    }
+
+    #[test]
+    fn test_extract_text_collapses_whitespace() {
+        let html = "<p>Hello   world</p>";
+        let text = extract_text(html);
+        assert_eq!(text, "Hello world");
+    }
+
+    #[test]
+    fn test_extract_text_newlines() {
+        let html = "<p>line1\n\nline2</p>";
+        let text = extract_text(html);
+        assert_eq!(text, "line1 line2");
+    }
+
+    #[test]
+    fn test_extract_text_empty() {
+        let html = "<html><body></body></html>";
+        let text = extract_text(html);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_extract_text_complex_html() {
+        let html = r#"
+            <html>
+                <head><title>My Page</title></head>
+                <body>
+                    <h1>Title</h1>
+                    <p>Some content here</p>
+                    <script>console.log("script")</script>
+                    <div>More text</div>
+                </body>
+            </html>
+        "#;
+        let text = extract_text(html);
+        assert!(text.contains("Title"));
+        assert!(text.contains("Some"));
+        assert!(text.contains("content"));
+    }
+
+    #[test]
+    fn test_truncate_shorter() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_longer() {
+        assert_eq!(truncate("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_multibyte() {
+        let result = truncate("こんにちは世界", 5);
+        assert_eq!(result, "こんにちは...");
+    }
+}

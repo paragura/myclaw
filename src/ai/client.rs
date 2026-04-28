@@ -178,3 +178,149 @@ impl AIClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_message_serialization() {
+        let msg = ChatMessage {
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"content\":\"Hello\""));
+    }
+
+    #[test]
+    fn test_chat_message_with_tool_calls() {
+        let msg = ChatMessage {
+            role: "assistant".to_string(),
+            content: "".to_string(),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                r#type: "function".to_string(),
+                function: FunctionCall {
+                    name: "file_read".to_string(),
+                    arguments: r#"{"command":"test.txt"}"#.to_string(),
+                },
+            }]),
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("tool_calls"));
+        assert!(json.contains("file_read"));
+    }
+
+    #[test]
+    fn test_chat_message_tool_call_id_skipped_when_none() {
+        let msg = ChatMessage {
+            role: "assistant".to_string(),
+            content: "result".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("tool_call_id"));
+    }
+
+    #[test]
+    fn test_tool_definition_serialization() {
+        let def = ToolDefinition {
+            r#type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "shell_exec".to_string(),
+                description: "Execute a shell command".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"}
+                    }
+                }),
+            },
+        };
+        let json = serde_json::to_string(&def).unwrap();
+        assert!(json.contains("\"type\":\"function\""));
+        assert!(json.contains("shell_exec"));
+    }
+
+    #[test]
+    fn test_chat_request_serialization() {
+        let req = ChatRequest {
+            model: "test-model".to_string(),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: "hi".to_string(),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            max_tokens: 1024,
+            temperature: 0.7,
+            tools: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"model\":\"test-model\""));
+        assert!(json.contains("\"max_tokens\":1024"));
+        assert!(json.contains("\"temperature\":0.7"));
+        assert!(!json.contains("tools"));
+    }
+
+    #[test]
+    fn test_chat_request_with_tools() {
+        let req = ChatRequest {
+            model: "test".to_string(),
+            messages: vec![],
+            max_tokens: 512,
+            temperature: 0.0,
+            tools: Some(vec![
+                ToolDefinition {
+                    r#type: "function".to_string(),
+                    function: FunctionDefinition {
+                        name: "test".to_string(),
+                        description: "desc".to_string(),
+                        parameters: serde_json::json!({}),
+                    },
+                },
+            ]),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("tools"));
+    }
+
+    #[test]
+    fn test_chat_response_deserialization() {
+        let json = r#"{
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello world"
+                }
+            }]
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.content, "Hello world");
+    }
+
+    #[test]
+    fn test_chat_response_empty_choices() {
+        let json = r#"{"choices": []}"#;
+        let resp: ChatResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.choices.is_empty());
+    }
+
+    #[test]
+    fn test_function_call_serialization() {
+        let fc = FunctionCall {
+            name: "web_fetch".to_string(),
+            arguments: r#"{"url":"https://example.com"}"#.to_string(),
+        };
+        let json = serde_json::to_string(&fc).unwrap();
+        assert!(json.contains("web_fetch"));
+        assert!(json.contains("https://example.com"));
+    }
+}

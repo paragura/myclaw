@@ -262,7 +262,7 @@ pub struct MarkdownSkill {
 
 impl MarkdownSkill {
     /// Parse frontmatter from a SKILL.md file.
-    fn from_markdown(content: &str) -> Option<Self> {
+    pub fn from_markdown(content: &str) -> Option<Self> {
         let content = content.trim();
         if !content.starts_with("---") {
             return None;
@@ -279,9 +279,180 @@ impl MarkdownSkill {
         let description = frontmatter
             .lines()
             .find(|l| l.starts_with("description:"))
-            .and_then(|l| l.split(':').nth(1).map(|s| s.trim().to_string()))?;
+            .and_then(|l| l.splitn(2, ':').nth(1).map(|s| s.trim().to_string()))?;
 
         Some(Self { name, description })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_sample_skill() -> Skill {
+        Skill::new(
+            "test_skill",
+            "A test skill for unit tests",
+            |_args: &str, _store: Arc<MemoryStore>| {
+                Box::pin(async move { "test result".to_string() })
+            },
+        )
+    }
+
+    #[test]
+    fn test_skill_new() {
+        let skill = make_sample_skill();
+        assert_eq!(skill.name, "test_skill");
+        assert_eq!(skill.description, "A test skill for unit tests");
+    }
+
+    #[tokio::test]
+    async fn test_skill_invoke() {
+        let skill = make_sample_skill();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let store = Arc::new(MemoryStore::new(pool));
+        let result = skill.invoke("test args", store).await;
+        assert_eq!(result, "test result");
+    }
+
+    #[test]
+    fn test_skills_manager_new_registers_builtins() {
+        let mgr = SkillsManager::new();
+        let skills = mgr.list();
+        assert!(!skills.is_empty());
+    }
+
+    #[test]
+    fn test_skills_manager_contains_known_skills() {
+        let mgr = SkillsManager::new();
+        let skill_names: Vec<&str> = mgr.list().iter().map(|s| s.name.as_str()).collect();
+
+        assert!(skill_names.contains(&"file_read"));
+        assert!(skill_names.contains(&"file_write"));
+        assert!(skill_names.contains(&"shell_exec"));
+        assert!(skill_names.contains(&"web_fetch"));
+        assert!(skill_names.contains(&"search_memories"));
+        assert!(skill_names.contains(&"sys_info"));
+        assert!(skill_names.contains(&"sys_process"));
+        assert!(skill_names.contains(&"file_list"));
+    }
+
+    #[test]
+    fn test_skills_manager_register_duplicate() {
+        let mut mgr = SkillsManager::new();
+        let count_before = mgr.list().len();
+        mgr.register(make_sample_skill());
+        assert_eq!(mgr.list().len(), count_before + 1);
+    }
+
+    #[tokio::test]
+    async fn test_skills_manager_invoke_unknown() {
+        let mgr = SkillsManager::new();
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let store = Arc::new(MemoryStore::new(pool));
+        let result = mgr.invoke("nonexistent_skill", "args", &store).await;
+        assert!(result.contains("Unknown skill"));
+    }
+
+    #[test]
+    fn test_skills_manager_list_descriptions_contains_sections() {
+        let mgr = SkillsManager::new();
+        let desc = mgr.list_descriptions();
+        assert!(desc.contains("Rust Tools"));
+    }
+
+    #[test]
+    fn test_skills_manager_tool_definitions() {
+        let mgr = SkillsManager::new();
+        let defs = mgr.to_tool_definitions();
+        assert!(!defs.is_empty());
+
+        // All definitions should be function type
+        for def in defs {
+            assert_eq!(def.r#type, "function");
+            assert!(!def.function.name.is_empty());
+            assert!(!def.function.description.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_skills_manager_list_clone() {
+        let mgr = SkillsManager::new();
+        let cloned = mgr.list_clone();
+        assert_eq!(cloned.len(), mgr.list().len());
+        // Verify cloned skills have the same names
+        let names: Vec<String> = mgr.list().iter().map(|s| s.name.clone()).collect();
+        let cloned_names: Vec<String> = cloned.iter().map(|s| s.name.clone()).collect();
+        for name in &names {
+            assert!(cloned_names.contains(name));
+        }
+    }
+
+    #[test]
+    fn test_markdown_skill_valid() {
+        let content = r#"---
+name: my_tool
+description: A custom tool for doing things
+-->
+
+Some markdown content here.
+"#;
+        let skill = MarkdownSkill::from_markdown(content).unwrap();
+        assert_eq!(skill.name, "my_tool");
+        assert_eq!(skill.description, "A custom tool for doing things");
+    }
+
+    #[test]
+    fn test_markdown_skill_no_frontmatter() {
+        let content = "Just plain markdown without frontmatter.";
+        assert!(MarkdownSkill::from_markdown(content).is_none());
+    }
+
+    #[test]
+    fn test_markdown_skill_missing_name() {
+        let content = r#"---
+description: A tool without a name
+-->
+"#;
+        assert!(MarkdownSkill::from_markdown(content).is_none());
+    }
+
+    #[test]
+    fn test_markdown_skill_missing_description() {
+        let content = r#"---
+name: some_tool
+-->
+"#;
+        assert!(MarkdownSkill::from_markdown(content).is_none());
+    }
+
+    #[test]
+    fn test_markdown_skill_empty_content() {
+        assert!(MarkdownSkill::from_markdown("").is_none());
+    }
+
+    #[test]
+    fn test_markdown_skill_description_with_colon() {
+        let content = r#"---
+name: my_tool
+description: Description: with a colon
+-->
+"#;
+        let skill = MarkdownSkill::from_markdown(content).unwrap();
+        assert_eq!(skill.description, "Description: with a colon");
+    }
+
+    #[test]
+    fn test_markdown_skill_sorted() {
+        let content = r#"---
+name: z_skill
+description: Last alphabetically
+-->
+"#;
+        let skill = MarkdownSkill::from_markdown(content).unwrap();
+        assert_eq!(skill.name, "z_skill");
     }
 }
 
